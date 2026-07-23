@@ -31,7 +31,7 @@ repository cannot grant itself an exemption.
 ## Licensing policy
 
 `tasks/licenses` runs a pinned REUSE version and verifies the repository's
-licensing metadata.
+licensing metadata. In Rust projects it also runs a pinned `cargo deny check`.
 
 ## License
 
