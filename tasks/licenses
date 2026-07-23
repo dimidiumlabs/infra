@@ -1,0 +1,9 @@
+#!/bin/sh
+# SPDX-FileCopyrightText: 2026 Nikolay Govorov
+# SPDX-License-Identifier: 0BSD
+#MISE description="Verify repository licensing metadata"
+#MISE tools={"pipx:reuse"="6.2.0"}
+
+set -eu
+
+reuse lint

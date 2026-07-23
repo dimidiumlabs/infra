@@ -8,29 +8,11 @@ Projects include `tasks/` with
 By default, tasks are fetched directly from this public repository over HTTPS:
 
 ```console
-mise run --no-cache signoff
+mise run signoff
+mise run licenses
 ```
 
-`--no-cache` makes a mutable branch such as `main` resolve to its latest commit.
-
-To test a dirty sibling checkout of this repository, use the `infra-local`
-environment provided by each project:
-
-```console
-mise -E infra-local run --no-cache signoff
-```
-
-For several commands, keep the environment selected in the current shell:
-
-```console
-export MISE_ENV=infra-local
-mise run --no-cache signoff
-# Run other tasks against the local infra checkout.
-unset MISE_ENV
-```
-
-The local environment resolves `../infra/tasks` relative to the project root;
-the default environment always resolves the public HTTPS repository.
+Consuming projects pin this repository by commit SHA.
 
 ## Sign-off policy
 
@@ -45,6 +27,11 @@ the default environment always resolves the public HTTPS repository.
 
 Approved emails are maintained centrally so a pull request in a consuming
 repository cannot grant itself an exemption.
+
+## Licensing policy
+
+`tasks/licenses` runs a pinned REUSE version and verifies the repository's
+licensing metadata.
 
 ## License
 
