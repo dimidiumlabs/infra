@@ -1,0 +1,66 @@
+#!/bin/sh -eu
+# SPDX-FileCopyrightText: 2026 Nikolay Govorov
+# SPDX-License-Identifier: 0BSD
+#MISE description="Verify contributor identities and Signed-off-by trailers"
+
+root=$(git rev-parse --show-toplevel)
+cd "$root"
+
+task_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+approved_emails_file="$task_dir/../config/signoff-approved-emails"
+
+is_approved_email() {
+    grep -v '^[[:space:]]*#' "$approved_emails_file" |
+        grep -Fqx -- "$1"
+}
+
+if [ ! -f "$approved_emails_file" ]; then
+    echo "Approved email configuration is missing: $approved_emails_file" >&2
+    exit 1
+fi
+
+bad=0
+for sha in $(git log --no-merges --format=%H); do
+    author=$(git show -s --format='%an' "$sha")
+    email=$(git show -s --format='%ae' "$sha")
+    if is_approved_email "$email"; then
+        continue
+    fi
+
+    expected="${author} <${email}>"
+
+    if ! git show -s --format='%(trailers:key=Signed-off-by,valueonly)' "$sha" |
+        grep -Fqx -- "$expected"; then
+        short_sha=$(printf '%.8s' "$sha")
+        echo "Commit $short_sha by $expected is missing a valid Signed-off-by"
+        bad=1
+    fi
+done
+
+if [ "$bad" -ne 0 ]; then
+    echo "Every commit from a non-approved author email must be signed off (git commit -s)"
+    echo "See CLA.md"
+    exit 1
+fi
+
+if [ ! -f .mailmap ]; then
+    echo "Contributor registry .mailmap is missing" >&2
+    exit 1
+fi
+
+missing=0
+for email in $(git log --no-merges --format='%ae%n%ce' | sort -u); do
+    if is_approved_email "$email"; then
+        continue
+    fi
+
+    if ! grep -v '^[[:space:]]*#' .mailmap | grep -qF -- "<${email}>"; then
+        echo "Email <${email}> is not in .mailmap"
+        missing=1
+    fi
+done
+
+if [ "$missing" -ne 0 ]; then
+    echo "All authors and committers must be listed in .mailmap"
+    exit 1
+fi
