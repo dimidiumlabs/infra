@@ -14,6 +14,19 @@ mise run licenses
 
 Consuming projects pin this repository by commit SHA.
 
+## Tool provisioning
+
+Each project declares its toolchain and standalone CLI dependencies in
+`mise.toml`. A fresh checkout is provisioned with one command:
+
+```console
+mise bootstrap
+```
+
+Shared tasks declare task-specific tools in their `#MISE tools` metadata, so
+`mise run` installs the same pinned versions on demand. System libraries that
+cannot be installed as portable tools belong in `[bootstrap.packages]`.
+
 ## Guardrails
 
 ### Licensing policy
