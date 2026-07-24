@@ -1,0 +1,11 @@
+# SPDX-FileCopyrightText: 2026 Nikolay Govorov
+# SPDX-License-Identifier: 0BSD
+
+min_version = "2026.7.5"
+
+[settings]
+experimental = true
+
+[task_config]
+dir = "{{cwd}}"
+includes = ["tasks"]

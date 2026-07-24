@@ -16,3 +16,10 @@ path = [
 ]
 SPDX-FileCopyrightText = "2026 Nikolay Govorov"
 SPDX-License-Identifier = "CC-BY-3.0"
+
+[[annotations]]
+path = [
+  ".mailmap",
+]
+SPDX-FileCopyrightText = "2026 Nikolay Govorov"
+SPDX-License-Identifier = "0BSD"
