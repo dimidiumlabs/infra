@@ -1,17 +1,62 @@
 #!/bin/sh -eu
 # SPDX-FileCopyrightText: 2026 Nikolay Govorov
 # SPDX-License-Identifier: 0BSD
-#MISE description="Verify contributor identities and Signed-off-by trailers"
+#MISE description="Verify contributor identities and CLA acceptance trailers"
 
 root=$(git rev-parse --show-toplevel)
 cd "$root"
 
 task_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 approved_emails_file="$task_dir/../config/signoff-approved-emails"
+unsupported_commits_file="$task_dir/../config/cla-unsupported-commits"
+
+if [ ! -f CLA.md ]; then
+    echo "CLA.md is missing" >&2
+    exit 1
+fi
+
+head_cla_version_count=$(grep -c '^Version ' CLA.md || :)
+if [ "$head_cla_version_count" -ne 1 ]; then
+    echo "CLA.md must declare exactly one version" >&2
+    exit 1
+fi
+
+head_cla_version=$(sed -n 's/^Version //p' CLA.md)
+if [ -z "$head_cla_version" ]; then
+    echo "CLA.md declares an empty version" >&2
+    exit 1
+fi
 
 is_approved_email() {
     grep -v '^[[:space:]]*#' "$approved_emails_file" |
         grep -Fqx -- "$1"
+}
+
+is_unsupported_commit() {
+    grep -v '^[[:space:]]*#' "$unsupported_commits_file" |
+        grep -Fqx -- "$1"
+}
+
+check_identity() {
+    identity=$1
+    role=$2
+    email=$(printf '%s\n' "$identity" | sed -n 's/^.*<\([^<>]*\)>$/\1/p')
+
+    if [ -z "$email" ]; then
+        echo "Commit $short_sha has an invalid $role identity: $identity"
+        bad=1
+        return
+    fi
+
+    if is_approved_email "$email"; then
+        return
+    fi
+
+    requires_cla=1
+    if ! printf '%s\n' "$signoffs" | grep -Fqx -- "$identity"; then
+        echo "Commit $short_sha $role $identity is missing a matching Signed-off-by"
+        bad=1
+    fi
 }
 
 if [ ! -f "$approved_emails_file" ]; then
@@ -19,26 +64,70 @@ if [ ! -f "$approved_emails_file" ]; then
     exit 1
 fi
 
+if [ ! -f "$unsupported_commits_file" ]; then
+    echo "Unsupported commit configuration is missing: $unsupported_commits_file" >&2
+    exit 1
+fi
+
 bad=0
 for sha in $(git log --no-merges --format=%H); do
-    author=$(git show -s --format='%an' "$sha")
-    email=$(git show -s --format='%ae' "$sha")
-    if is_approved_email "$email"; then
-        continue
+    short_sha=$(printf '%.8s' "$sha")
+    signoffs=$(git show -s --format='%(trailers:key=Signed-off-by,valueonly)' "$sha")
+    requires_cla=0
+
+    author=$(git show -s --format='%an <%ae>' "$sha")
+    check_identity "$author" "author"
+
+    coauthors=$(git show -s --format='%(trailers:key=Co-authored-by,valueonly)' "$sha")
+    if [ -n "$coauthors" ]; then
+        old_ifs=$IFS
+        IFS='
+'
+        for coauthor in $coauthors; do
+            check_identity "$coauthor" "co-author"
+        done
+        IFS=$old_ifs
     fi
 
-    expected="${author} <${email}>"
+    if [ "$requires_cla" -eq 1 ] && ! is_unsupported_commit "$sha"; then
+        expected_cla_version_count=$(
+            git show "$sha:CLA.md" 2>/dev/null | grep -c '^Version ' || :
+        )
+        if [ "$expected_cla_version_count" -ne 1 ]; then
+            echo "Commit $short_sha does not contain a CLA.md with exactly one version"
+            bad=1
+            continue
+        fi
 
-    if ! git show -s --format='%(trailers:key=Signed-off-by,valueonly)' "$sha" |
-        grep -Fqx -- "$expected"; then
-        short_sha=$(printf '%.8s' "$sha")
-        echo "Commit $short_sha by $expected is missing a valid Signed-off-by"
-        bad=1
+        expected_cla_version=$(
+            git show "$sha:CLA.md" | sed -n 's/^Version //p'
+        )
+        if [ -z "$expected_cla_version" ]; then
+            echo "Commit $short_sha contains an empty CLA version"
+            bad=1
+            continue
+        fi
+
+        commit_cla_version=$(
+            git show -s --format='%(trailers:key=CLA-Version,valueonly)' "$sha"
+        )
+        if [ "$commit_cla_version" != "$expected_cla_version" ]; then
+            if [ -z "$commit_cla_version" ]; then
+                echo "Commit $short_sha is missing CLA-Version: $expected_cla_version"
+            else
+                echo "Commit $short_sha has invalid CLA-Version: $commit_cla_version"
+                echo "Expected CLA-Version: $expected_cla_version"
+            fi
+            bad=1
+        fi
     fi
 done
 
 if [ "$bad" -ne 0 ]; then
-    echo "Every commit from a non-approved author email must be signed off (git commit -s)"
+    echo "Every non-approved author and co-author must accept the CLA in their commit"
+    echo "Required trailers:"
+    echo "  CLA-Version: <version from CLA.md>"
+    echo "  Signed-off-by: Name <email>"
     echo "See CLA.md"
     exit 1
 fi

@@ -18,15 +18,22 @@ Consuming projects pin this repository by commit SHA.
 
 `tasks/signoff` verifies that:
 
-- commits authored with an email from `config/signoff-approved-emails` are
-  trusted without a trailer;
-- every other non-merge commit contains a `Signed-off-by` trailer exactly
-  matching its author;
+- authors and co-authors with an email from
+  `config/signoff-approved-emails` are trusted without a trailer;
+- `CLA.md` declares exactly one version;
+- every non-approved author and co-author has a `Signed-off-by` trailer exactly
+  matching their commit identity;
+- every commit with a non-approved author or co-author has exactly one
+  `CLA-Version` trailer matching the version declared by `CLA.md` in that
+  commit;
+- commits listed in `config/cla-unsupported-commits` retain their
+  `Signed-off-by` requirement but are explicitly not treated as covered by a
+  versioned CLA;
 - every non-approved author and committer email in the complete non-merge
   history is registered in `.mailmap`.
 
-Approved emails are maintained centrally so a pull request in a consuming
-repository cannot grant itself an exemption.
+Approved emails and unsupported commits are maintained centrally so a pull
+request in a consuming repository cannot grant itself an exemption.
 
 ## Licensing policy
 
