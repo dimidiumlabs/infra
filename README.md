@@ -14,6 +14,25 @@ mise run licenses
 
 Consuming projects pin this repository by commit SHA.
 
+## Packaging
+
+Projects build and stage their own binaries and keep their nFPM configuration.
+The shared [`package`](tasks/package) task creates only the formats explicitly
+requested by a project: nFPM packages (`deb`, `rpm`, or `apk`) and portable
+archives (`tar.gz` or `zip`). Repository publication is intentionally outside
+this task.
+
+```console
+mise run package -- \
+  --version VERSION --arch ARCH --output DIR \
+  [--config nfpm.yaml] [--apk-public-key NAME.rsa.pub] \
+  deb rpm apk
+
+mise run package -- \
+  --archive-root DIR --archive-name NAME --output DIR \
+  tar.gz zip
+```
+
 ## Tool provisioning
 
 Each project declares its toolchain and standalone CLI dependencies in

@@ -1,0 +1,134 @@
+#!/bin/sh -eu
+# SPDX-FileCopyrightText: 2026 Nikolay Govorov
+# SPDX-License-Identifier: 0BSD
+#MISE description="Build release archives and signed Linux packages"
+#MISE tools={"nfpm"="2.47.0"}
+
+usage() {
+    echo "usage: mise run package -- --output DIR [--config FILE] [--version VERSION --arch ARCH] [--apk-public-key FILE] [--archive-root DIR --archive-name NAME] deb|rpm|apk|tar.gz|zip..." >&2
+    exit 2
+}
+
+setup_gpg_signing() {
+    : "${GPG_KEY_ID:?package: GPG_KEY_ID is required with GPG_PRIVATE_KEY}"
+    : "${GPG_PASSPHRASE:?package: GPG_PASSPHRASE is required with GPG_PRIVATE_KEY}"
+
+    export GNUPGHOME="$work/gnupg"
+    mkdir -m 700 "$GNUPGHOME"
+
+    SIGNING_PRIVATE_KEY="$work/signing.asc"
+    printf '%s' "$GPG_PRIVATE_KEY" > "$SIGNING_PRIVATE_KEY"
+
+    chmod 600 "$SIGNING_PRIVATE_KEY"
+    printf '%s\n' "$GPG_PASSPHRASE" | gpg --batch --yes \
+        --pinentry-mode loopback --passphrase-fd 0 \
+        --import "$SIGNING_PRIVATE_KEY"
+
+    NFPM_PASSPHRASE=$GPG_PASSPHRASE
+    GPG_KEY_ID=$(printf '%s' "$GPG_KEY_ID" | sed 's/.*\(.\{16\}\)$/\1/')
+    export SIGNING_PRIVATE_KEY NFPM_PASSPHRASE GPG_KEY_ID
+    unset GPG_PRIVATE_KEY GPG_PASSPHRASE
+}
+
+config=nfpm.yaml
+version=
+arch=
+output=
+archive_root=
+archive_name=
+apk_public_key=
+formats=
+system_formats=
+archive_formats=
+
+while [ "$#" -gt 0 ]; do
+    case "$1" in
+        --config) [ "$#" -ge 2 ] || usage; config=$2; shift 2 ;;
+        --version) [ "$#" -ge 2 ] || usage; version=$2; shift 2 ;;
+        --arch) [ "$#" -ge 2 ] || usage; arch=$2; shift 2 ;;
+        --output) [ "$#" -ge 2 ] || usage; output=$2; shift 2 ;;
+        --archive-root) [ "$#" -ge 2 ] || usage; archive_root=$2; shift 2 ;;
+        --archive-name) [ "$#" -ge 2 ] || usage; archive_name=$2; shift 2 ;;
+        --apk-public-key) [ "$#" -ge 2 ] || usage; apk_public_key=$2; shift 2 ;;
+        deb|rpm|apk)
+            formats="$formats $1"
+            system_formats="$system_formats $1"
+            shift
+            ;;
+        tar.gz|zip)
+            formats="$formats $1"
+            archive_formats="$archive_formats $1"
+            shift
+            ;;
+        *) usage ;;
+    esac
+done
+
+[ -n "$output" ] && [ -n "$formats" ] || usage
+
+if [ -n "$system_formats" ]; then
+    [ -n "$version" ] && [ -n "$arch" ] || usage
+    [ -f "$config" ] || { echo "package: $config not found" >&2; exit 1; }
+fi
+
+if [ -n "$archive_formats" ]; then
+    [ -n "$archive_root" ] && [ -n "$archive_name" ] || usage
+    [ -d "$archive_root" ] || { echo "package: $archive_root not found" >&2; exit 1; }
+    case "$archive_name" in
+        *[!A-Za-z0-9._-]*|.|..) echo "package: invalid archive name: $archive_name" >&2; exit 1 ;;
+    esac
+fi
+
+case "$apk_public_key" in
+    *[!A-Za-z0-9._-]*|.|..) echo "package: invalid APK public key name: $apk_public_key" >&2; exit 1 ;;
+esac
+
+mkdir -p "$output"
+output=$(cd "$output" && pwd)
+
+work=$(mktemp -d)
+trap 'rm -rf "$work"' EXIT HUP INT TERM
+
+case " $system_formats " in
+    *" deb "*|*" rpm "*)
+        if [ -n "${GPG_PRIVATE_KEY:-}" ]; then
+            setup_gpg_signing
+        fi
+        ;;
+esac
+
+case " $system_formats " in
+    *" apk "*)
+        if [ -n "${APK_PRIVATE_KEY:-}" ]; then
+            APK_SIGNING_KEY="$work/signing.rsa"
+            printf '%s' "$APK_PRIVATE_KEY" > "$APK_SIGNING_KEY"
+            chmod 600 "$APK_SIGNING_KEY"
+            export APK_SIGNING_KEY
+            unset APK_PRIVATE_KEY
+        fi
+        if [ -n "${APK_SIGNING_KEY:-}" ]; then
+            [ -n "$apk_public_key" ] || {
+                echo "package: --apk-public-key is required for signed APK packages" >&2
+                exit 1
+            }
+            openssl rsa -in "$APK_SIGNING_KEY" -pubout -out "$output/$apk_public_key"
+        fi
+        ;;
+esac
+
+for format in $formats; do
+    case "$format" in
+        deb|rpm|apk)
+            ARCH=$arch VERSION=$version
+            export ARCH VERSION
+            nfpm package --config "$config" --packager "$format" --target "$output/"
+            ;;
+        tar.gz)
+            tar -czf "$output/$archive_name.tar.gz" -C "$archive_root" .
+            ;;
+        zip)
+            rm -f "$output/$archive_name.zip"
+            (cd "$archive_root" && zip -qry "$output/$archive_name.zip" .)
+            ;;
+    esac
+done

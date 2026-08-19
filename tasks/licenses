@@ -1,15 +1,13 @@
-#!/bin/sh
+#!/bin/sh -eu
 # SPDX-FileCopyrightText: 2026 Nikolay Govorov
 # SPDX-License-Identifier: 0BSD
 #MISE description="Verify repository licensing metadata"
 #MISE tools={"pipx:reuse"="6.2.0","aqua:EmbarkStudios/cargo-deny"="0.19.0"}
 
-set -eu
-
 check_copyright_headers() {
     invalid_headers=$(
         git grep -n -I -E \
-            'Copyright[[:space:]]+(\([cC]\)|©)|SPDX-FileCopyrightText:' \
+            '^((<!--|#|//|/\*|\*)[[:space:]]*)?(Copyright[[:space:]]+(\([cC]\)|©)|SPDX-FileCopyrightText:)' \
             -- . \
             ':(exclude)*.md' \
             ':(exclude)LICENSE' \
