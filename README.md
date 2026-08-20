@@ -19,8 +19,14 @@ Consuming projects pin this repository by commit SHA.
 Projects build and stage their own binaries and keep their nFPM configuration.
 The shared [`package`](tasks/package) task creates only the formats explicitly
 requested by a project: nFPM packages (`deb`, `rpm`, or `apk`) and portable
-archives (`tar.gz` or `zip`). Repository publication is intentionally outside
-this task.
+archives (`tar.gz` or `zip`). APK configurations may use
+`${PACKAGE_KEY_VERSION}` in `apk.signature.key_name`; the task renders the
+four-digit generation before invoking nFPM. DEB and RPM payloads are built by
+nFPM and then signed through `debsigs` and `rpmsign`, allowing CI to use only an
+OpenPGP signing subkey while the certification key remains offline. The shared
+[`publish`](tasks/publish) task adds
+explicitly selected package formats to signed repositories in the organization
+package bucket.
 
 ```console
 mise run package -- \
@@ -32,6 +38,38 @@ mise run package -- \
   --archive-root DIR --archive-name NAME --output DIR \
   tar.gz zip
 ```
+
+## Package repositories
+
+Projects publish beneath a service-owned prefix at
+`https://pkg.dimidiumlabs.io/<service>/`. Channels are explicit, previously
+published package payloads are retained, and an S3 lock serializes metadata
+updates for each service/channel.
+
+```console
+mise run publish -- \
+  --service SERVICE --channel CHANNEL --input DIR \
+  deb rpm apk
+```
+
+The selected formats map to these layouts:
+
+- APT: `<service>/apt/{dists,pool}/<channel>/`
+- RPM: `<service>/rpm/<channel>/`
+- APK: `<service>/apk/<channel>/<architecture>/`
+
+APT and RPM metadata refer to the aggregate organization OpenPGP bundle at
+`/packages.gpg`. Immutable generation keys live at
+`/keys/packages.<version>.gpg` and
+`/keys/packages.<version>.rsa.pub`. APK packages and indexes embed
+the versioned RSA key name. Public keys are provisioned independently; each
+publication checks its signing keys against the selected generation and never
+creates or replaces key objects.
+
+Bucket configuration comes from `S3_BUCKET`, `S3_ENDPOINT`, `S3_PUBLIC_URL`,
+`S3_ACCESS_KEY_ID`, and `S3_SECRET_ACCESS_KEY`. `PACKAGE_KEY_VERSION` selects
+the four-digit key generation. OpenPGP signing uses `GPG_PRIVATE_KEY`,
+`GPG_PASSPHRASE`, and `GPG_KEY_ID`; APK index signing uses `APK_PRIVATE_KEY`.
 
 ## Tool provisioning
 

@@ -13,8 +13,8 @@ permissions:
   contents: read
 
 jobs:
-  package:
-    name: Package task
+  release-tasks:
+    name: Package and publish tasks
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
@@ -25,7 +25,18 @@ jobs:
           experimental: true
           install: false
 
+      - name: Install dependencies
+        run: mise bootstrap --locked --yes --update
+
+      - name: Check Python
+        run: |
+          ruff check tasks/_*.py tasks/package tasks/publish tests/fakes/boto3.py
+          ruff format --check tasks/_*.py tasks/package tasks/publish tests/fakes/boto3.py
+
       - name: Check package contract
         run: |
           tests/package
           tests/package-integration
+
+      - name: Check publish contract
+        run: tests/publish-integration

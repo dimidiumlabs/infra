@@ -6,6 +6,25 @@ min_version = "2026.7.5"
 [settings]
 experimental = true
 
+[tools]
+ruff = "0.16.3"
+uv = "0.12.5"
+
+[bootstrap.packages]
+# APT
+"apt:apt-utils" = "latest"
+"apt:createrepo-c" = "latest"
+"apt:debsigs" = "latest"
+"apt:gnupg" = "latest"
+"apt:openssl" = "latest"
+"apt:rpm" = "latest"
+
+# DNF
+"dnf:createrepo_c" = "latest"
+"dnf:gnupg2" = "latest"
+"dnf:openssl" = "latest"
+"dnf:rpm" = "latest"
+
 [task_config]
 dir = "{{cwd}}"
 includes = ["tasks"]

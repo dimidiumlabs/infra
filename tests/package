@@ -17,19 +17,24 @@ ln -s "$work/outside" "$work/stage/outside-link"
 cat > "$work/bin/nfpm" <<'EOF'
 #!/bin/sh
 set -eu
-[ -z "${GPG_PRIVATE_KEY:-}" ] && [ -z "${APK_PRIVATE_KEY:-}" ] || {
+[ -z "${GPG_PRIVATE_KEY:-}" ] && \
+[ -z "${APK_PRIVATE_KEY:-}" ] && \
+[ -z "${SIGNING_PRIVATE_KEY:-}" ] && \
+[ -z "${NFPM_PASSPHRASE:-}" ] || {
     echo 'raw private key leaked to nFPM' >&2
     exit 1
 }
 printf 'ARCH=%s\nVERSION=%s\nGPG_KEY_ID=%s\n' "$ARCH" "$VERSION" "${GPG_KEY_ID:-}" >> "$PACKAGE_TEST_LOG"
 while [ "$#" -gt 0 ]; do
     case "$1" in
+        --config) config=$2; shift 2 ;;
         --packager) packager=$2; shift 2 ;;
         --target) target=$2; shift 2 ;;
         *) shift ;;
     esac
 done
 printf '%s\n' "$packager" >> "$PACKAGE_TEST_LOG"
+grep '^key_name:' "$config" >> "$PACKAGE_TEST_LOG" || true
 : > "$target/test.$packager"
 EOF
 
@@ -37,7 +42,23 @@ cat > "$work/bin/gpg" <<'EOF'
 #!/bin/sh
 set -eu
 printf 'gpg\n' >> "$PACKAGE_TEST_LOG"
+while [ "$#" -gt 0 ]; do
+    case "$1" in
+        -o) output=$2; shift 2 ;;
+        *) shift ;;
+    esac
+done
+[ -z "${output:-}" ] || printf signature > "$output"
 EOF
+
+for command in debsigs rpmsign; do
+    cat > "$work/bin/$command" <<'EOF'
+#!/bin/sh
+set -eu
+printf '%s\n' "${0##*/}" >> "$PACKAGE_TEST_LOG"
+EOF
+    chmod +x "$work/bin/$command"
+done
 
 cat > "$work/bin/openssl" <<'EOF'
 #!/bin/sh
@@ -91,12 +112,44 @@ APK_PRIVATE_KEY=apk-private \
         --arch amd64 \
         --output "$work/out" \
         --apk-public-key test.rsa.pub \
-        deb apk
+        deb rpm apk
 
 test -f "$work/out/test.apk"
 test -f "$work/out/test.rsa.pub"
 grep -q '^gpg$' "$work/package.log"
+grep -q '^debsigs$' "$work/package.log"
+grep -q '^rpmsign$' "$work/package.log"
 grep -q '^GPG_KEY_ID=89ABCDEF01234567$' "$work/package.log"
+
+# Repository publication exports the organization APK public key, so package
+# builds do not need to stage a per-service public key artifact.
+APK_PRIVATE_KEY=apk-private \
+    "$root/tasks/package" \
+        --config "$work/nfpm.yaml" \
+        --version 1.2.3 \
+        --arch amd64 \
+        --output "$work/out" \
+        apk
+
+printf 'key_name: packages.${PACKAGE_KEY_VERSION}\n' > "$work/versioned.yaml"
+if APK_PRIVATE_KEY=apk-private "$root/tasks/package" \
+    --config "$work/versioned.yaml" \
+    --version 1.2.3 \
+    --arch amd64 \
+    --output "$work/out" \
+    apk 2>/dev/null; then
+    echo 'package test: accepted versioned APK config without key version' >&2
+    exit 1
+fi
+APK_PRIVATE_KEY=apk-private \
+PACKAGE_KEY_VERSION=0001 \
+    "$root/tasks/package" \
+        --config "$work/versioned.yaml" \
+        --version 1.2.3 \
+        --arch amd64 \
+        --output "$work/out" \
+        apk
+grep -q '^key_name: packages.0001$' "$work/package.log"
 
 if "$root/tasks/package" --output "$work/out" deb 2>/dev/null; then
     echo 'package test: accepted system format without version and architecture' >&2

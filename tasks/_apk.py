@@ -1,0 +1,146 @@
+# SPDX-FileCopyrightText: 2026 Nikolay Govorov
+# SPDX-License-Identifier: 0BSD
+
+from __future__ import annotations
+
+import gzip
+import hashlib
+import io
+import os
+import platform
+import shutil
+import subprocess
+import tarfile
+import urllib.request
+from pathlib import Path
+
+from _lib import TaskError, run
+
+TASK = "publish"
+APK_TOOLS_VERSION = "2.14.10-r0"
+APK_TOOLS_SHA256 = {
+    "x86_64": "c86e3822764e5fe19f41ce2e13553e48cac1ea4e74f858338e8d44bf0b616b61",
+    "aarch64": "3e22f80dd0272dc487e4ca84b2c6b660ca392cbad970764efe9ef9555b806ac8",
+}
+
+
+def architecture(package: Path) -> str:
+    metadata = run(
+        ["tar", "-xOzf", package, ".PKGINFO"],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.DEVNULL,
+    ).stdout
+    for line in metadata.splitlines():
+        if line.startswith("arch = "):
+            return line.removeprefix("arch = ")
+    raise TaskError(f"{TASK}: cannot read APK architecture: {package}")
+
+
+def apk_tool(work: Path) -> Path:
+    configured = os.environ.get("APK_TOOL")
+    if configured:
+        tool = Path(configured)
+        if os.access(tool, os.X_OK):
+            return tool
+        raise TaskError(f"{TASK}: APK_TOOL is not executable: {tool}")
+    for name in ("apk.static", "apk"):
+        if command := shutil.which(name):
+            return Path(command)
+
+    machine = platform.machine()
+    apk_arch = {
+        "x86_64": "x86_64",
+        "amd64": "x86_64",
+        "aarch64": "aarch64",
+        "arm64": "aarch64",
+    }.get(machine)
+    if apk_arch is None:
+        raise TaskError(f"{TASK}: apk-tools is unavailable for {machine}")
+    archive = work / "apk-tools-static.apk"
+    url = (
+        "https://dl-cdn.alpinelinux.org/alpine/v3.22/main/"
+        f"{apk_arch}/apk-tools-static-{APK_TOOLS_VERSION}.apk"
+    )
+    urllib.request.urlretrieve(url, archive)
+    if hashlib.sha256(archive.read_bytes()).hexdigest() != APK_TOOLS_SHA256[apk_arch]:
+        raise TaskError(f"{TASK}: apk-tools checksum mismatch")
+    directory = work / "apk-tools"
+    directory.mkdir()
+    run(
+        ["tar", "-xzf", archive, "-C", directory, "sbin/apk.static"],
+        stderr=subprocess.DEVNULL,
+    )
+    return directory / "sbin" / "apk.static"
+
+
+def sign_index(context, index: Path) -> None:
+    name = f".SIGN.RSA256.{context.apk_signing.public_key_name}"
+    signature = index.parent / name
+    run(
+        [
+            "openssl",
+            "dgst",
+            "-sha256",
+            "-sign",
+            context.apk_signing.private_key_file,
+            "-out",
+            signature,
+            index,
+        ],
+        env=context.apk_signing.environment,
+    )
+    data = signature.read_bytes()
+    stream = io.BytesIO()
+    with tarfile.open(fileobj=stream, mode="w", format=tarfile.USTAR_FORMAT) as archive:
+        information = tarfile.TarInfo(name)
+        information.size = len(data)
+        information.mode = 0o644
+        information.mtime = int(os.environ.get("SOURCE_DATE_EPOCH", "0"))
+        archive.addfile(information, io.BytesIO(data))
+    size = 512 + ((len(data) + 511) // 512) * 512
+    index.write_bytes(
+        gzip.compress(stream.getvalue()[:size], mtime=0) + index.read_bytes()
+    )
+    signature.unlink()
+
+
+def publish(context) -> None:
+    tool = apk_tool(context.work)
+    packages = context.packages["apk"]
+    architectures = sorted({architecture(package) for package in packages})
+    keys = context.work / "apk-keys"
+    keys.mkdir()
+    for public_key in context.apk_public_keys:
+        shutil.copy2(public_key, keys / public_key.name)
+
+    for apk_arch in architectures:
+        root = context.work / "apk" / apk_arch
+        root.mkdir(parents=True)
+        remote = context.storage.service_key("apk", context.channel, apk_arch)
+        context.storage.download_prefix(remote, root, "*.apk")
+        for package in packages:
+            if architecture(package) == apk_arch:
+                context.add_package(package, root)
+        for package in root.glob("*.apk"):
+            if run(
+                [tool, "verify", "--keys-dir", keys, package], check=False
+            ).returncode:
+                raise TaskError(
+                    f"{TASK}: APK signature verification failed: {package.name}"
+                )
+        index = root / "APKINDEX.tar.gz"
+        run(
+            [
+                tool,
+                "--allow-untrusted",
+                "index",
+                "--description",
+                f"Dimidium Labs {context.service} {context.channel}",
+                "--output",
+                index,
+                *root.glob("*.apk"),
+            ]
+        )
+        sign_index(context, index)
+        context.storage.upload_payloads(root, remote, "*.apk")
+        context.storage.upload(index, f"{remote}/APKINDEX.tar.gz")
