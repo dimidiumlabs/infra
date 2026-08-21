@@ -33,10 +33,14 @@ jobs:
           ruff check tasks/_*.py tasks/package tasks/publish tests/fakes/boto3.py
           ruff format --check tasks/_*.py tasks/package tasks/publish tests/fakes/boto3.py
 
-      - name: Check package contract
+      - name: Check shell
+        run: sh -n tasks/chart tasks/container tests/oci-tasks
+
+      - name: Tests
         run: |
+          tests/oci-tasks
+
           tests/package
           tests/package-integration
 
-      - name: Check publish contract
-        run: tests/publish-integration
+          tests/publish-integration

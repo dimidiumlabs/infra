@@ -39,6 +39,33 @@ mise run package -- \
   tar.gz zip
 ```
 
+## OCI artifacts
+
+The shared [`container`](tasks/container) task builds one or more tagged OCI
+images with Docker Buildx. Registry authentication is deliberately left to the
+calling workflow, so the same build can be pushed to GHCR, Cloudflare, or
+another OCI registry. The [`chart`](tasks/chart) task strictly lints a Helm
+chart, packages an immutable version, and can push it to one or more OCI
+repositories.
+
+```console
+mise run container -- \
+  --context . --file deploy/Dockerfile \
+  --platform linux/amd64,linux/arm64 \
+  --target site --build-arg APP=site \
+  --tag ghcr.io/example/site:1.2.3 \
+  --cache-scope site --push
+
+mise run chart -- \
+  --chart charts/service --version 1.2.3 --app-version 1.2.3 \
+  --output dist/charts --push oci://ghcr.io/example/charts
+```
+
+Container tags, chart versions, credentials, and release policy remain owned by
+the consuming project. `--provenance false --sbom false` is available for
+registries that do not accept OCI attestation indexes. Without `--push` or
+`--load`, Buildx only validates and caches the build result.
+
 ## Package repositories
 
 Projects publish beneath a service-owned prefix at
